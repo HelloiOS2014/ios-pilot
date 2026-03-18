@@ -1,0 +1,20 @@
+{
+  "idle_timeout": "30m",
+  "log_buffer_size": 2000,
+  "wda": {
+    "auto_start": true,
+    "bundle_id": "com.facebook.WebDriverAgentRunner.xctrunner",
+    "health_interval": "30s",
+    "max_restart": 3
+  },
+  "screenshot": {
+    "dir": "~/.config/ios-pilot/screenshots",
+    "retention_hours": 24,
+    "max_count": 200
+  },
+  "annotate": {
+    "box_color": "#FF0000",
+    "label_size": 14,
+    "interactive_types": ["button", "textfield", "switch", "link", "cell"]
+  }
+}
