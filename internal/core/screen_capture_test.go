@@ -30,8 +30,10 @@ func (m *mockScreenshotDriver) TakeScreenshot(_ string) ([]byte, error) {
 
 type mockWDADriverWithElements struct {
 	mockWDADriver
-	elements    []driver.WDAElement
-	elementsErr error
+	elements      []driver.WDAElement
+	elementsErr   error
+	screenshotData []byte
+	screenshotErr  error
 }
 
 func (m *mockWDADriverWithElements) GetInteractiveElements(_, _ string, _ []string) ([]driver.WDAElement, error) {
@@ -40,6 +42,10 @@ func (m *mockWDADriverWithElements) GetInteractiveElements(_, _ string, _ []stri
 
 func (m *mockWDADriverWithElements) GetElementTree(_, _ string) ([]driver.WDAElement, error) {
 	return m.elements, m.elementsErr
+}
+
+func (m *mockWDADriverWithElements) Screenshot(_, _ string) ([]byte, error) {
+	return m.screenshotData, m.screenshotErr
 }
 
 // ---- helpers ----
@@ -296,5 +302,67 @@ func TestTakeScreenshot_ErrorPropagates(t *testing.T) {
 	_, err := sc.TakeScreenshot()
 	if err == nil {
 		t.Fatal("expected error from TakeScreenshot when driver fails")
+	}
+}
+
+func TestCaptureRaw_FallbackToWDA(t *testing.T) {
+	// instruments fails
+	sd := &mockScreenshotDriver{err: fmt.Errorf("instruments: no developer image")}
+
+	// WDA screenshot succeeds
+	wdaPNG := makePNG(100, 100)
+	wd := &mockWDADriverWithElements{
+		mockWDADriver:  mockWDADriver{alive: true, sessionID: "sess-1"},
+		screenshotData: wdaPNG,
+	}
+
+	dd := &mockDeviceDriver{devices: singleDevice()}
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
+	if _, err := dm.Connect("abc123"); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	cfg := screenshotCfg(t)
+	sc := NewScreenCapture(sd, wd, dm, cfg)
+
+	path, err := sc.TakeScreenshot()
+	if err != nil {
+		t.Fatalf("expected WDA fallback to succeed, got: %v", err)
+	}
+
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("file not readable: %v", readErr)
+	}
+	if !bytes.Equal(data, wdaPNG) {
+		t.Error("saved file should contain WDA screenshot data")
+	}
+}
+
+func TestCaptureRaw_BothFail(t *testing.T) {
+	instrumentsErr := fmt.Errorf("instruments: no developer image")
+	sd := &mockScreenshotDriver{err: instrumentsErr}
+
+	wd := &mockWDADriverWithElements{
+		mockWDADriver: mockWDADriver{alive: true, sessionID: "sess-1"},
+		screenshotErr: fmt.Errorf("wda: connection refused"),
+	}
+
+	dd := &mockDeviceDriver{devices: singleDevice()}
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
+	if _, err := dm.Connect("abc123"); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	cfg := screenshotCfg(t)
+	sc := NewScreenCapture(sd, wd, dm, cfg)
+
+	_, err := sc.TakeScreenshot()
+	if err == nil {
+		t.Fatal("expected error when both instruments and WDA fail")
+	}
+	// Should wrap the instruments error (more diagnostic value).
+	if !strings.Contains(err.Error(), "instruments") {
+		t.Errorf("expected instruments error in message, got: %v", err)
 	}
 }

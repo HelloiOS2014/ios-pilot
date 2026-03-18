@@ -176,24 +176,39 @@ func (sc *ScreenCapture) Look(annotate bool, ui bool) (*LookResult, error) {
 }
 
 // captureRaw takes a raw screenshot and returns PNG bytes.
+// It first tries instruments (fast, no WDA dependency). If that fails and WDA
+// is available, it falls back to the WDA screenshot API (no Developer Image needed).
 func (sc *ScreenCapture) captureRaw() ([]byte, error) {
 	var udid string
 	if dev := sc.deviceManager.ConnectedDevice(); dev != nil {
 		udid = dev.UDID
 	}
+
+	// 1. Try instruments (fast path, no WDA needed).
 	data, err := sc.screenshotDrv.TakeScreenshot(udid)
-	if err != nil {
-		return nil, fmt.Errorf("take screenshot: %w", err)
+	if err == nil {
+		// Accept both raw PNG bytes and base64-encoded PNG.
+		if len(data) > 0 && !bytes.HasPrefix(data, []byte("\x89PNG")) {
+			decoded, decErr := base64.StdEncoding.DecodeString(string(data))
+			if decErr == nil {
+				data = decoded
+			}
+		}
+		return data, nil
 	}
 
-	// Accept both raw PNG bytes and base64-encoded PNG.
-	if len(data) > 0 && !bytes.HasPrefix(data, []byte("\x89PNG")) {
-		decoded, decErr := base64.StdEncoding.DecodeString(string(data))
-		if decErr == nil {
-			data = decoded
+	// 2. Instruments failed → try WDA screenshot (no Developer Image required).
+	if sc.wdaDriver != nil && sc.deviceManager.Mode() == "full" {
+		wdaData, wdaErr := sc.wdaDriver.Screenshot(
+			sc.deviceManager.WDAURL(),
+			sc.deviceManager.WDASessionID(),
+		)
+		if wdaErr == nil {
+			return wdaData, nil
 		}
 	}
-	return data, nil
+
+	return nil, fmt.Errorf("take screenshot: %w", err)
 }
 
 // ensureScreenshotDir creates the screenshot directory if it does not exist.
