@@ -2,7 +2,9 @@
 package core
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"sync"
 
 	"ios-pilot/internal/config"
@@ -29,16 +31,19 @@ type DeviceStatus struct {
 
 // DeviceManager orchestrates device connection, tunnel setup, and WDA lifecycle.
 type DeviceManager struct {
-	deviceDriver driver.DeviceDriver
-	tunnelDriver driver.TunnelDriver
-	wdaDriver    driver.WDADriver
-	config       *config.Config
+	deviceDriver     driver.DeviceDriver
+	tunnelDriver     driver.TunnelDriver
+	wdaDriver        driver.WDADriver
+	wdaProcessDriver driver.WDAProcessDriver
+	config           *config.Config
 
-	mu           sync.RWMutex
-	connected    *driver.DeviceInfo
-	wdaSessionID string
-	wdaURL       string
-	mode         string // "full" or "degraded"
+	mu            sync.RWMutex
+	connected     *driver.DeviceInfo
+	wdaSessionID  string
+	wdaURL        string
+	mode          string // "full" or "degraded"
+	portForwarder io.Closer
+	wdaProcess    io.Closer
 }
 
 // NewDeviceManager constructs a DeviceManager backed by the supplied drivers.
@@ -46,13 +51,15 @@ func NewDeviceManager(
 	dd driver.DeviceDriver,
 	td driver.TunnelDriver,
 	wd driver.WDADriver,
+	wpd driver.WDAProcessDriver,
 	cfg *config.Config,
 ) *DeviceManager {
 	return &DeviceManager{
-		deviceDriver: dd,
-		tunnelDriver: td,
-		wdaDriver:    wd,
-		config:       cfg,
+		deviceDriver:     dd,
+		tunnelDriver:     td,
+		wdaDriver:        wd,
+		wdaProcessDriver: wpd,
+		config:           cfg,
 	}
 }
 
@@ -92,15 +99,37 @@ func (dm *DeviceManager) Connect(udid string) (*DeviceStatus, error) {
 		_ = dm.tunnelDriver.EnsureTunnel(udid)
 	}
 
+	// Forward device WDA port to localhost — failure is non-fatal.
+	if dm.tunnelDriver != nil {
+		fwd, fwdErr := dm.tunnelDriver.ForwardPort(udid, 8100, 8100)
+		if fwdErr == nil {
+			dm.mu.Lock()
+			dm.portForwarder = fwd
+			dm.mu.Unlock()
+		}
+	}
+
 	// Determine WDA URL.
 	wdaURL := fmt.Sprintf("http://localhost:%s", defaultWDAPort)
 
-	// Probe WDA.
+	// Probe WDA — if not running, try to start it.
 	var sessionID string
 	var mode string
 
 	if dm.wdaDriver != nil {
 		alive, _ := dm.wdaDriver.Status(wdaURL)
+
+		// WDA not responding — try to launch it via WDAProcessDriver.
+		if !alive && dm.wdaProcessDriver != nil {
+			proc, startErr := dm.wdaProcessDriver.StartWDA(context.Background(), udid)
+			if startErr == nil {
+				dm.mu.Lock()
+				dm.wdaProcess = proc
+				dm.mu.Unlock()
+				alive, _ = dm.wdaDriver.Status(wdaURL)
+			}
+		}
+
 		if alive {
 			sid, serr := dm.wdaDriver.CreateSession(wdaURL)
 			if serr == nil {
@@ -139,6 +168,18 @@ func (dm *DeviceManager) Disconnect() error {
 	// Best-effort session deletion.
 	if dm.wdaDriver != nil && dm.wdaSessionID != "" {
 		_ = dm.wdaDriver.DeleteSession(dm.wdaURL, dm.wdaSessionID)
+	}
+
+	// Kill WDA process.
+	if dm.wdaProcess != nil {
+		_ = dm.wdaProcess.Close()
+		dm.wdaProcess = nil
+	}
+
+	// Stop port forwarding.
+	if dm.portForwarder != nil {
+		_ = dm.portForwarder.Close()
+		dm.portForwarder = nil
 	}
 
 	dm.connected = nil

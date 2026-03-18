@@ -2,7 +2,10 @@
 // All driver implementations must satisfy these interfaces for testability.
 package driver
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // DeviceInfo holds basic information about a connected iOS device.
 type DeviceInfo struct {
@@ -79,6 +82,17 @@ type TunnelDriver interface {
 	EnsureTunnel(udid string) error
 	IsTunnelRunning(udid string) bool
 	StopTunnel(udid string) error
+	// ForwardPort forwards hostPort on localhost to devicePort on the iOS device.
+	// The returned io.Closer stops the forwarding when closed.
+	ForwardPort(udid string, hostPort, devicePort uint16) (io.Closer, error)
+}
+
+// WDAProcessDriver manages the WDA process lifecycle on a device.
+// This is separate from WDADriver which handles HTTP API communication.
+type WDAProcessDriver interface {
+	// StartWDA launches WDA on the device. Blocks until WDA is ready or ctx is cancelled.
+	// Returns a stopper that kills the WDA process when closed.
+	StartWDA(ctx context.Context, udid string) (io.Closer, error)
 }
 
 // WDAElement describes a UI element returned by WebDriverAgent.

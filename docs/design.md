@@ -66,6 +66,7 @@ User / LLM
 
 **Driver Layer**: Wraps external tools behind stable interfaces.
 - `GoIosDriver`: imports go-ios as a Go library (not CLI calls). Handles device enumeration, app management, screenshots, syslog, iOS 17+ tunnel management.
+- `GoIosWDAProcessDriver`: uses go-ios `testmanagerd.RunTestWithConfig` to programmatically launch WDA on the device, without needing xcodebuild or go-ios CLI. Automatically discovers the WDA bundle ID from installed apps.
 - `WdaDriver`: HTTP client for WebDriverAgent W3C WebDriver protocol. Handles all UI interactions (tap, swipe, input), UI element tree, text input. **WDA is the only way to inject touch events on real iOS devices.**
 
 ### Key Design Decision: go-ios as Library
@@ -150,9 +151,10 @@ ios-pilot device disconnect              # Disconnect
 
 **On connect**:
 1. go-ios connects to device
-2. Detect if WDA is installed
-3. If installed, check if running → start if not → verify session
-4. Report mode: "full" (with WDA) or "degraded" (without WDA)
+2. Ensure tunnel (iOS 17+)
+3. Forward port 8100 (localhost → device WDA)
+4. Probe WDA → if not responding, launch WDA via `testmanagerd.RunTestWithConfig` (auto-discovers bundle ID)
+5. Create WDA session → report mode: "full" (with WDA) or "degraded" (without WDA)
 
 **Output** (`device status`):
 ```json
@@ -294,17 +296,17 @@ Every check captures a screenshot for evidence, regardless of pass/fail.
 
 ### First-Time Setup
 
-WDA must be installed once on the device. ios-pilot provides a guided setup:
+WDA must be installed once on the device (build-for-testing via Xcode). ios-pilot provides a guided setup:
 
 ```bash
 ios-pilot wda setup
 # 1. Checks if WDA is already installed on device
-# 2. If not, guides user through Xcode signing + build
+# 2. If not, guides user through Xcode signing + build-for-testing
 # 3. Verifies WDA is accessible
 # 4. Saves WDA bundle ID to config
 ```
 
-After initial setup, WDA is managed automatically.
+After initial installation, WDA is fully auto-managed — `device connect` launches it via `testmanagerd.RunTestWithConfig`, no need to keep xcodebuild running.
 
 ### Automatic Lifecycle
 
@@ -315,7 +317,7 @@ device connect
     │
     ├── WDA running? → Yes → verify session → full mode
     │
-    └── WDA not running? → go-ios runwda → wait ready → full mode
+    └── WDA not running? → testmanagerd.RunTestWithConfig → wait ready → full mode
 
 daemon running:
     │
@@ -553,7 +555,8 @@ ios-pilot/
 │       │   ├── app.go
 │       │   ├── screenshot.go
 │       │   ├── syslog.go
-│       │   └── tunnel.go       # iOS 17+ tunnel management
+│       │   ├── tunnel.go       # iOS 17+ tunnel management
+│       │   └── wda_process.go  # WDA process launch via testmanagerd
 │       └── wda/                 # WDA HTTP client
 │           ├── client.go        # W3C WebDriver protocol
 │           ├── session.go       # Session management + health check

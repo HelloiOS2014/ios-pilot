@@ -1,7 +1,9 @@
 package core
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"testing"
 
 	"ios-pilot/internal/config"
@@ -33,13 +35,20 @@ func (m *mockDeviceDriver) GetDevice(udid string) (*driver.DeviceInfo, error) {
 }
 
 type mockTunnelDriver struct {
-	ensureErr error
-	running   bool
+	ensureErr  error
+	running    bool
+	forwardErr error
 }
 
-func (m *mockTunnelDriver) EnsureTunnel(_ string) error    { return m.ensureErr }
+func (m *mockTunnelDriver) EnsureTunnel(_ string) error   { return m.ensureErr }
 func (m *mockTunnelDriver) IsTunnelRunning(_ string) bool  { return m.running }
 func (m *mockTunnelDriver) StopTunnel(_ string) error      { return nil }
+func (m *mockTunnelDriver) ForwardPort(_ string, _, _ uint16) (io.Closer, error) {
+	if m.forwardErr != nil {
+		return nil, m.forwardErr
+	}
+	return io.NopCloser(nil), nil
+}
 
 type mockWDADriver struct {
 	alive          bool
@@ -64,6 +73,19 @@ func (m *mockWDADriver) CreateSession(_ string) (string, error) {
 func (m *mockWDADriver) DeleteSession(_, _ string) error {
 	m.deleteCalled = true
 	return m.deleteErr
+}
+
+type mockWDAProcessDriver struct {
+	startErr    error
+	startCalled bool
+}
+
+func (m *mockWDAProcessDriver) StartWDA(_ context.Context, _ string) (io.Closer, error) {
+	m.startCalled = true
+	if m.startErr != nil {
+		return nil, m.startErr
+	}
+	return io.NopCloser(nil), nil
 }
 
 // Remaining WDADriver interface methods — unused in these tests.
@@ -102,7 +124,7 @@ func TestConnectWithWDA_FullMode(t *testing.T) {
 	td := &mockTunnelDriver{}
 	wd := &mockWDADriver{alive: true, sessionID: "sess-1"}
 
-	dm := NewDeviceManager(dd, td, wd, defaultCfg())
+	dm := NewDeviceManager(dd, td, wd, nil, defaultCfg())
 
 	status, err := dm.Connect("abc123")
 	if err != nil {
@@ -131,7 +153,7 @@ func TestConnectWithoutWDA_DegradedMode(t *testing.T) {
 	td := &mockTunnelDriver{}
 	wd := &mockWDADriver{alive: false} // WDA not responsive
 
-	dm := NewDeviceManager(dd, td, wd, defaultCfg())
+	dm := NewDeviceManager(dd, td, wd, nil, defaultCfg())
 
 	status, err := dm.Connect("abc123")
 	if err != nil {
@@ -154,7 +176,7 @@ func TestConnectAutoSelectsSingleDevice(t *testing.T) {
 	td := &mockTunnelDriver{}
 	wd := &mockWDADriver{alive: false}
 
-	dm := NewDeviceManager(dd, td, wd, defaultCfg())
+	dm := NewDeviceManager(dd, td, wd, nil, defaultCfg())
 
 	// Pass empty udid — should auto-select.
 	status, err := dm.Connect("")
@@ -179,7 +201,7 @@ func TestConnectWithSpecificUDID(t *testing.T) {
 	td := &mockTunnelDriver{}
 	wd := &mockWDADriver{alive: false}
 
-	dm := NewDeviceManager(dd, td, wd, defaultCfg())
+	dm := NewDeviceManager(dd, td, wd, nil, defaultCfg())
 
 	status, err := dm.Connect("bbb")
 	if err != nil {
@@ -195,7 +217,7 @@ func TestDisconnectClearsState(t *testing.T) {
 	td := &mockTunnelDriver{}
 	wd := &mockWDADriver{alive: true, sessionID: "sess-42"}
 
-	dm := NewDeviceManager(dd, td, wd, defaultCfg())
+	dm := NewDeviceManager(dd, td, wd, nil, defaultCfg())
 
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("connect: %v", err)
@@ -230,7 +252,7 @@ func TestDisconnectClearsState(t *testing.T) {
 
 func TestStatusWhenNotConnected(t *testing.T) {
 	dd := &mockDeviceDriver{}
-	dm := NewDeviceManager(dd, nil, nil, defaultCfg())
+	dm := NewDeviceManager(dd, nil, nil, nil, defaultCfg())
 
 	s := dm.Status()
 	if s.Connected {
@@ -247,7 +269,7 @@ func TestListDevicesDelegatesToDriver(t *testing.T) {
 		{UDID: "x2", Name: "X2"},
 	}
 	dd := &mockDeviceDriver{devices: expected}
-	dm := NewDeviceManager(dd, nil, nil, defaultCfg())
+	dm := NewDeviceManager(dd, nil, nil, nil, defaultCfg())
 
 	got, err := dm.ListDevices()
 	if err != nil {
@@ -269,7 +291,7 @@ func TestConnectMultipleDevicesNoUDID_Error(t *testing.T) {
 		{UDID: "bbb"},
 	}
 	dd := &mockDeviceDriver{devices: devices}
-	dm := NewDeviceManager(dd, nil, nil, defaultCfg())
+	dm := NewDeviceManager(dd, nil, nil, nil, defaultCfg())
 
 	_, err := dm.Connect("")
 	if err == nil {
@@ -279,7 +301,7 @@ func TestConnectMultipleDevicesNoUDID_Error(t *testing.T) {
 
 func TestConnectNoDevices_Error(t *testing.T) {
 	dd := &mockDeviceDriver{devices: []driver.DeviceInfo{}}
-	dm := NewDeviceManager(dd, nil, nil, defaultCfg())
+	dm := NewDeviceManager(dd, nil, nil, nil, defaultCfg())
 
 	_, err := dm.Connect("")
 	if err == nil {
@@ -287,12 +309,82 @@ func TestConnectNoDevices_Error(t *testing.T) {
 	}
 }
 
+func TestConnectStartsWDAWhenNotRunning(t *testing.T) {
+	dd := &mockDeviceDriver{devices: singleDevice()}
+	td := &mockTunnelDriver{}
+	// WDA initially not alive, but becomes alive after StartWDA.
+	wd := &mockWDADriver{alive: false, sessionID: "sess-auto"}
+	wpd := &mockWDAProcessDriver{}
+
+	dm := NewDeviceManager(dd, td, wd, wpd, defaultCfg())
+
+	// After StartWDA is called, simulate WDA becoming alive.
+	origStatus := wd.Status
+	_ = origStatus
+	// We need WDA to return false on first call, true on second.
+	// Use a counter to simulate this.
+	callCount := 0
+	dm.wdaDriver = &statusToggleWDADriver{
+		inner:     wd,
+		callCount: &callCount,
+	}
+
+	status, err := dm.Connect("abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !wpd.startCalled {
+		t.Error("expected StartWDA to be called")
+	}
+	if !status.Connected {
+		t.Error("expected Connected=true")
+	}
+	if status.WDA.Mode != "full" {
+		t.Errorf("expected full mode after auto-start, got %q", status.WDA.Mode)
+	}
+}
+
+// statusToggleWDADriver returns false on first Status call, true on subsequent.
+type statusToggleWDADriver struct {
+	inner     *mockWDADriver
+	callCount *int
+}
+
+func (s *statusToggleWDADriver) Status(_ string) (bool, error) {
+	*s.callCount++
+	if *s.callCount == 1 {
+		return false, nil
+	}
+	return true, nil
+}
+func (s *statusToggleWDADriver) CreateSession(url string) (string, error) {
+	return s.inner.CreateSession(url)
+}
+func (s *statusToggleWDADriver) DeleteSession(url, sid string) error {
+	return s.inner.DeleteSession(url, sid)
+}
+func (s *statusToggleWDADriver) GetElementTree(_, _ string) ([]driver.WDAElement, error) {
+	return nil, nil
+}
+func (s *statusToggleWDADriver) GetInteractiveElements(_, _ string, _ []string) ([]driver.WDAElement, error) {
+	return nil, nil
+}
+func (s *statusToggleWDADriver) FindElement(_, _, _, _ string) (*driver.WDAElement, error) {
+	return nil, nil
+}
+func (s *statusToggleWDADriver) Tap(_, _ string, _, _ int) error        { return nil }
+func (s *statusToggleWDADriver) Swipe(_, _ string, _, _, _, _ int) error { return nil }
+func (s *statusToggleWDADriver) InputText(_, _, _ string) error         { return nil }
+func (s *statusToggleWDADriver) PressButton(_, _, _ string) error       { return nil }
+func (s *statusToggleWDADriver) Screenshot(_, _ string) ([]byte, error) { return nil, nil }
+
 func TestTunnelFailureIsNonFatal(t *testing.T) {
 	dd := &mockDeviceDriver{devices: singleDevice()}
 	td := &mockTunnelDriver{ensureErr: fmt.Errorf("tunnel error")}
 	wd := &mockWDADriver{alive: false}
 
-	dm := NewDeviceManager(dd, td, wd, defaultCfg())
+	dm := NewDeviceManager(dd, td, wd, nil, defaultCfg())
 
 	// Tunnel fails but Connect should still succeed.
 	status, err := dm.Connect("abc123")

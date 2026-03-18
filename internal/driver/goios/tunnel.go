@@ -2,10 +2,12 @@ package goios
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
 	goios "github.com/danielpaulus/go-ios/ios"
+	"github.com/danielpaulus/go-ios/ios/forward"
 	"github.com/danielpaulus/go-ios/ios/tunnel"
 	"ios-pilot/internal/driver"
 )
@@ -89,4 +91,18 @@ func (t *GoIosTunnelDriver) StopTunnel(udid string) error {
 		return fmt.Errorf("stop tunnel %q: agent returned status %d", udid, resp.StatusCode)
 	}
 	return nil
+}
+
+// ForwardPort forwards hostPort on localhost to devicePort on the given iOS device.
+// The returned io.Closer stops the forwarding when closed.
+func (t *GoIosTunnelDriver) ForwardPort(udid string, hostPort, devicePort uint16) (io.Closer, error) {
+	entry, err := goios.GetDevice(udid)
+	if err != nil {
+		return nil, fmt.Errorf("forward port: get device %q: %w", udid, err)
+	}
+	listener, err := forward.Forward(entry, hostPort, devicePort)
+	if err != nil {
+		return nil, fmt.Errorf("forward port: %d -> %d: %w", hostPort, devicePort, err)
+	}
+	return listener, nil
 }

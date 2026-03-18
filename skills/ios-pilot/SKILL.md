@@ -9,7 +9,8 @@ trigger: when LLM needs to verify functionality on a real iOS device
 ## Prerequisites
 - ios-pilot installed (`ios-pilot --help` to verify)
 - iOS device connected via USB
-- For UI interaction: WDA installed (`ios-pilot wda setup`)
+- For UI interaction: WDA installed on device (`ios-pilot wda setup`)
+  - Only needs to be installed once; `device connect` auto-launches WDA
 
 ## Workflow
 

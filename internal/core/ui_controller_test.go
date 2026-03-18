@@ -60,7 +60,7 @@ func fullModeManager(t *testing.T) *DeviceManager {
 	t.Helper()
 	dd := &mockDeviceDriver{devices: singleDevice()}
 	wd := &mockWDADriver{alive: true, sessionID: "sess-1"}
-	dm := NewDeviceManager(dd, nil, wd, defaultCfg())
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("setup Connect: %v", err)
 	}
@@ -71,7 +71,7 @@ func degradedModeManager(t *testing.T) *DeviceManager {
 	t.Helper()
 	dd := &mockDeviceDriver{devices: singleDevice()}
 	wd := &mockWDADriver{alive: false}
-	dm := NewDeviceManager(dd, nil, wd, defaultCfg())
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("setup Connect: %v", err)
 	}
@@ -80,7 +80,7 @@ func degradedModeManager(t *testing.T) *DeviceManager {
 
 func disconnectedManager() *DeviceManager {
 	dd := &mockDeviceDriver{}
-	return NewDeviceManager(dd, nil, nil, defaultCfg())
+	return NewDeviceManager(dd, nil, nil, nil, defaultCfg())
 }
 
 // ---- Tap tests ----

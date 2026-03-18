@@ -62,7 +62,7 @@ func connectedManager(t *testing.T) *DeviceManager {
 	t.Helper()
 	dd := &mockDeviceDriver{devices: singleDevice()}
 	wd := &mockWDADriver{alive: false}
-	dm := NewDeviceManager(dd, nil, wd, defaultCfg())
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("setup Connect: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestAppList_WhenConnected(t *testing.T) {
 
 func TestAppList_WhenNotConnected(t *testing.T) {
 	ad := &mockAppDriver{}
-	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, defaultCfg())
+	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, nil, defaultCfg())
 	am := NewAppManager(ad, dm)
 
 	_, err := am.List()
@@ -124,7 +124,7 @@ func TestAppInstall_DelegatesToDriver(t *testing.T) {
 
 func TestAppInstall_WhenNotConnected(t *testing.T) {
 	ad := &mockAppDriver{}
-	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, defaultCfg())
+	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, nil, defaultCfg())
 	am := NewAppManager(ad, dm)
 
 	err := am.Install("/tmp/app.ipa")
@@ -151,7 +151,7 @@ func TestAppLaunch_ReturnsPID(t *testing.T) {
 
 func TestAppLaunch_WhenNotConnected(t *testing.T) {
 	ad := &mockAppDriver{}
-	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, defaultCfg())
+	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, nil, defaultCfg())
 	am := NewAppManager(ad, dm)
 
 	_, err := am.Launch("com.example.app")
@@ -174,7 +174,7 @@ func TestAppKill_DelegatesToDriver(t *testing.T) {
 
 func TestAppKill_WhenNotConnected(t *testing.T) {
 	ad := &mockAppDriver{}
-	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, defaultCfg())
+	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, nil, defaultCfg())
 	am := NewAppManager(ad, dm)
 
 	err := am.Kill("com.example.app")
@@ -210,7 +210,7 @@ func TestAppForeground_ReturnsBundle(t *testing.T) {
 
 func TestAppForeground_WhenNotConnected(t *testing.T) {
 	ad := &mockAppDriver{}
-	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, defaultCfg())
+	dm := NewDeviceManager(&mockDeviceDriver{}, nil, nil, nil, defaultCfg())
 	am := NewAppManager(ad, dm)
 
 	_, err := am.Foreground()

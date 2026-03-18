@@ -73,7 +73,7 @@ func connectedDegradedManager(t *testing.T) *DeviceManager {
 	t.Helper()
 	dd := &mockDeviceDriver{devices: singleDevice()}
 	wd := &mockWDADriver{alive: false}
-	dm := NewDeviceManager(dd, nil, wd, defaultCfg())
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("setup Connect: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestLook_Annotate_FullMode(t *testing.T) {
 	}
 
 	dd := &mockDeviceDriver{devices: singleDevice()}
-	dm := NewDeviceManager(dd, nil, wd, defaultCfg())
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestLook_UI_FullMode(t *testing.T) {
 	}
 
 	dd := &mockDeviceDriver{devices: singleDevice()}
-	dm := NewDeviceManager(dd, nil, wd, defaultCfg())
+	dm := NewDeviceManager(dd, nil, wd, nil, defaultCfg())
 	if _, err := dm.Connect("abc123"); err != nil {
 		t.Fatalf("connect: %v", err)
 	}

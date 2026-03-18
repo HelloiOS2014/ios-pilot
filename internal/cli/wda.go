@@ -25,16 +25,18 @@ const wdaSetupGuide = `WebDriverAgent (WDA) Setup Guide
    - Set your Team in Signing & Capabilities
    - Change the Bundle Identifier to something unique
 
-4. Build and run on your device:
-   xcodebuild build-for-testing test-without-building \
+4. Build and install WDA on your device:
+   xcodebuild build-for-testing \
      -project WebDriverAgent.xcodeproj \
      -scheme WebDriverAgentRunner \
-     -destination 'id=<YOUR_DEVICE_UDID>'
+     -destination 'id=<YOUR_DEVICE_UDID>' \
+     -allowProvisioningUpdates
 
-5. Verify WDA is running:
-   curl http://localhost:8100/status
+   Note: You only need to install WDA on the device. You do NOT need to keep
+   xcodebuild running — ios-pilot will automatically launch WDA when you connect.
 
-6. Once WDA is running, ios-pilot will auto-detect it on connect:
+5. Connect with ios-pilot (tunnel, port forwarding, WDA launch, and session
+   creation are all automatic):
    ios-pilot device connect
 
 For more details: https://appium.github.io/appium-xcuitest-driver/latest/preparation/real-device-config/

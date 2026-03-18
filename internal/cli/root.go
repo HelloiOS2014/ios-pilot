@@ -215,9 +215,10 @@ func runDaemonServe() int {
 	syslogDrv := goios.NewSyslogDriver()
 	tunnelDrv := goios.NewTunnelDriver()
 	wdaClient := wda.NewWDAClient()
+	wdaProcessDrv := goios.NewWDAProcessDriver()
 
 	// Create core managers.
-	deviceMgr := core.NewDeviceManager(deviceDrv, tunnelDrv, wdaClient, &cfg)
+	deviceMgr := core.NewDeviceManager(deviceDrv, tunnelDrv, wdaClient, wdaProcessDrv, &cfg)
 	appMgr := core.NewAppManager(appDrv, deviceMgr)
 	screenCapture := core.NewScreenCapture(screenshotDrv, wdaClient, deviceMgr, &cfg)
 	uiCtrl := core.NewUiController(wdaClient, deviceMgr)
