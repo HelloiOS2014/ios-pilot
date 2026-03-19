@@ -143,8 +143,9 @@ func (c *WDAClient) InputText(wdaURL string, sessionID string, text string) erro
 	if err != nil {
 		return fmt.Errorf("input text: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+
+	return c.checkResponse(resp, "input text")
 }
 
 // PressButton presses a hardware button (e.g., "home", "volumeUp") via WDA.
@@ -160,8 +161,9 @@ func (c *WDAClient) PressButton(wdaURL string, sessionID string, button string) 
 	if err != nil {
 		return fmt.Errorf("press button: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+
+	return c.checkResponse(resp, "press button")
 }
 
 // Screenshot takes a screenshot and returns the raw PNG bytes.
@@ -261,6 +263,27 @@ func (c *WDAClient) FindElement(wdaURL string, sessionID string, using string, v
 // Private helpers
 // ---------------------------------------------------------------------------
 
+// checkResponse reads the WDA HTTP response and returns an error if the
+// status code is not 2xx, including the WDA error message when available.
+func (c *WDAClient) checkResponse(resp *http.Response, context string) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+
+	// Try to extract WDA error message from JSON response.
+	var wdaResp struct {
+		Value struct {
+			Message string `json:"message"`
+			Error   string `json:"error"`
+		} `json:"value"`
+	}
+	if json.Unmarshal(body, &wdaResp) == nil && wdaResp.Value.Message != "" {
+		return fmt.Errorf("%s: WDA %d: %s: %s", context, resp.StatusCode, wdaResp.Value.Error, wdaResp.Value.Message)
+	}
+	return fmt.Errorf("%s: WDA returned HTTP %d: %s", context, resp.StatusCode, string(body))
+}
+
 // fetchSource calls GET /session/{id}/source and returns raw body bytes.
 func (c *WDAClient) fetchSource(wdaURL, sessionID string) ([]byte, error) {
 	url := fmt.Sprintf("%s/session/%s/source", wdaURL, sessionID)
@@ -345,8 +368,9 @@ func (c *WDAClient) postActions(wdaURL, sessionID string, actions map[string]int
 	if err != nil {
 		return fmt.Errorf("post actions: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+
+	return c.checkResponse(resp, "post actions")
 }
 
 

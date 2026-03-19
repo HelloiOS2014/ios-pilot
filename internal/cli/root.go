@@ -84,7 +84,11 @@ func Run() int {
 }
 
 // configDir returns the ios-pilot configuration directory.
+// Supports IOS_PILOT_CONFIG_DIR env override for test isolation.
 func configDir() string {
+	if dir := os.Getenv("IOS_PILOT_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "ios-pilot")
 }
