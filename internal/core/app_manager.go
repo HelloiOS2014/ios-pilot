@@ -6,6 +6,8 @@ import (
 )
 
 // AppManager wraps AppDriver with connectivity guards.
+// When instruments-based operations fail, it falls back to WDA endpoints
+// (which do not require Developer Image).
 type AppManager struct {
 	appDriver     driver.AppDriver
 	deviceManager *DeviceManager
@@ -46,21 +48,61 @@ func (am *AppManager) Install(path string) error {
 }
 
 // Launch starts the application identified by bundleID and returns its PID.
+// Falls back to WDA if instruments/appservice fails.
 func (am *AppManager) Launch(bundleID string) (int, error) {
 	udid, err := am.requireConnected()
 	if err != nil {
 		return 0, err
 	}
-	return am.appDriver.Launch(udid, bundleID)
+	pid, err := am.appDriver.Launch(udid, bundleID)
+	if err == nil {
+		return pid, nil
+	}
+
+	// Instruments failed — try WDA fallback (no Developer Image needed).
+	if am.deviceManager.Mode() == "full" {
+		wdaDrv := am.deviceManager.WDADriver()
+		if wdaDrv != nil {
+			wdaErr := wdaDrv.LaunchApp(
+				am.deviceManager.WDAURL(),
+				am.deviceManager.WDASessionID(),
+				bundleID,
+			)
+			if wdaErr == nil {
+				return 0, nil // WDA doesn't return PID, return 0
+			}
+		}
+	}
+	return 0, err // return original instruments error
 }
 
 // Kill stops the application identified by bundleID.
+// Falls back to WDA if instruments/appservice fails.
 func (am *AppManager) Kill(bundleID string) error {
 	udid, err := am.requireConnected()
 	if err != nil {
 		return err
 	}
-	return am.appDriver.Kill(udid, bundleID)
+	err = am.appDriver.Kill(udid, bundleID)
+	if err == nil {
+		return nil
+	}
+
+	// Instruments failed — try WDA fallback.
+	if am.deviceManager.Mode() == "full" {
+		wdaDrv := am.deviceManager.WDADriver()
+		if wdaDrv != nil {
+			wdaErr := wdaDrv.KillApp(
+				am.deviceManager.WDAURL(),
+				am.deviceManager.WDASessionID(),
+				bundleID,
+			)
+			if wdaErr == nil {
+				return nil
+			}
+		}
+	}
+	return err
 }
 
 // Uninstall removes the application identified by bundleID from the device.

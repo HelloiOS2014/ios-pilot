@@ -219,6 +219,11 @@ func (dm *DeviceManager) ConnectedDevice() *driver.DeviceInfo {
 	return &cp
 }
 
+// WDADriver returns the WDA driver instance.
+func (dm *DeviceManager) WDADriver() driver.WDADriver {
+	return dm.wdaDriver
+}
+
 // WDASessionID returns the active WDA session identifier.
 func (dm *DeviceManager) WDASessionID() string {
 	dm.mu.RLock()

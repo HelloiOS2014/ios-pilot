@@ -117,4 +117,6 @@ type WDADriver interface {
 	InputText(wdaURL string, sessionID string, text string) error
 	PressButton(wdaURL string, sessionID string, button string) error
 	Screenshot(wdaURL string, sessionID string) ([]byte, error)
+	LaunchApp(wdaURL string, sessionID string, bundleID string) error
+	KillApp(wdaURL string, sessionID string, bundleID string) error
 }

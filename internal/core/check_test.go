@@ -61,6 +61,8 @@ func (m *mockCheckerWDA) Swipe(_, _ string, _, _, _, _ int) error { return nil }
 func (m *mockCheckerWDA) InputText(_, _, _ string) error          { return nil }
 func (m *mockCheckerWDA) PressButton(_, _, _ string) error        { return nil }
 func (m *mockCheckerWDA) Screenshot(_, _ string) ([]byte, error)  { return nil, nil }
+func (m *mockCheckerWDA) LaunchApp(_, _, _ string) error          { return nil }
+func (m *mockCheckerWDA) KillApp(_, _, _ string) error            { return nil }
 
 // ---- mock AppDriver for Checker ----
 

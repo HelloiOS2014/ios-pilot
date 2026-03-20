@@ -166,6 +166,43 @@ func (c *WDAClient) PressButton(wdaURL string, sessionID string, button string) 
 	return c.checkResponse(resp, "press button")
 }
 
+// LaunchApp launches an app by bundle ID via WDA's custom endpoint.
+// This works without Developer Image / instruments.
+func (c *WDAClient) LaunchApp(wdaURL string, sessionID string, bundleID string) error {
+	body := map[string]interface{}{"bundleId": bundleID}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("launch app: marshal body: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/session/%s/wda/apps/launch", wdaURL, sessionID)
+	resp, err := c.http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("launch app: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return c.checkResponse(resp, "launch app")
+}
+
+// KillApp terminates an app by bundle ID via WDA's custom endpoint.
+func (c *WDAClient) KillApp(wdaURL string, sessionID string, bundleID string) error {
+	body := map[string]interface{}{"bundleId": bundleID}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("kill app: marshal body: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/session/%s/wda/apps/terminate", wdaURL, sessionID)
+	resp, err := c.http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("kill app: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return c.checkResponse(resp, "kill app")
+}
+
 // Screenshot takes a screenshot and returns the raw PNG bytes.
 // It calls GET {wdaURL}/screenshot which returns base64-encoded image data.
 func (c *WDAClient) Screenshot(wdaURL string, sessionID string) ([]byte, error) {

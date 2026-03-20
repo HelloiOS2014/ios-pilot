@@ -102,7 +102,9 @@ func (m *mockWDADriver) Tap(_, _ string, _, _ int) error        { return nil }
 func (m *mockWDADriver) Swipe(_, _ string, _, _, _, _ int) error { return nil }
 func (m *mockWDADriver) InputText(_, _, _ string) error         { return nil }
 func (m *mockWDADriver) PressButton(_, _, _ string) error       { return nil }
-func (m *mockWDADriver) Screenshot(_, _ string) ([]byte, error) { return nil, nil }
+func (m *mockWDADriver) Screenshot(_, _ string) ([]byte, error)    { return nil, nil }
+func (m *mockWDADriver) LaunchApp(_, _, _ string) error            { return nil }
+func (m *mockWDADriver) KillApp(_, _, _ string) error              { return nil }
 
 // ---- helpers ----
 
@@ -378,6 +380,8 @@ func (s *statusToggleWDADriver) Swipe(_, _ string, _, _, _, _ int) error { retur
 func (s *statusToggleWDADriver) InputText(_, _, _ string) error         { return nil }
 func (s *statusToggleWDADriver) PressButton(_, _, _ string) error       { return nil }
 func (s *statusToggleWDADriver) Screenshot(_, _ string) ([]byte, error) { return nil, nil }
+func (s *statusToggleWDADriver) LaunchApp(_, _, _ string) error         { return nil }
+func (s *statusToggleWDADriver) KillApp(_, _, _ string) error           { return nil }
 
 func TestTunnelFailureIsNonFatal(t *testing.T) {
 	dd := &mockDeviceDriver{devices: singleDevice()}

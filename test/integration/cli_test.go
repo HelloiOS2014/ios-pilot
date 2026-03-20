@@ -29,7 +29,6 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Build the binary into a temp directory.
 	tmpDir, err := os.MkdirTemp("", "ios-pilot-integration-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create temp dir: %v\n", err)
@@ -51,11 +50,9 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	// Cleanup: stop daemon, remove temp dir.
 	cleanup := exec.Command(pilotBin, "daemon", "stop")
 	cleanup.Env = append(os.Environ(), "IOS_PILOT_CONFIG_DIR="+configDir)
 	_ = cleanup.Run()
-
 	time.Sleep(500 * time.Millisecond)
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
@@ -140,7 +137,7 @@ func runPilotJSONArray(t *testing.T, args ...string) []any {
 	return result
 }
 
-// takeScreenshotHash calls `look`, reads the screenshot file, returns its SHA-256.
+// takeScreenshotHash calls `look`, reads the PNG file, returns its SHA-256.
 func takeScreenshotHash(t *testing.T) string {
 	t.Helper()
 	result := runPilotJSON(t, "look")
@@ -159,20 +156,25 @@ func takeScreenshotHash(t *testing.T) string {
 	return fmt.Sprintf("%x", h)
 }
 
+// getScreenSize returns (width, height) from a `look` result.
+func getScreenSize(t *testing.T) (int, int) {
+	t.Helper()
+	result := runPilotJSON(t, "look")
+	ss, ok := result["screen_size"].([]any)
+	if !ok || len(ss) != 2 {
+		t.Fatal("cannot get screen_size from look")
+	}
+	w, _ := ss[0].(float64)
+	h, _ := ss[1].(float64)
+	return int(w), int(h)
+}
+
 var wdaMode string
-var canControlApps bool
 
 func requireWDA(t *testing.T) {
 	t.Helper()
 	if wdaMode != "full" {
 		t.Skipf("WDA mode is %q (not full) — skipping", wdaMode)
-	}
-}
-
-func requireAppControl(t *testing.T) {
-	t.Helper()
-	if !canControlApps {
-		t.Skip("app control unavailable (Developer Image not mounted?) — skipping")
 	}
 }
 
@@ -182,13 +184,15 @@ func requireAppControl(t *testing.T) {
 
 func TestIntegrationCLI(t *testing.T) {
 	t.Cleanup(func() {
-		cmd := exec.Command(pilotBin, "device", "disconnect")
-		cmd.Env = append(os.Environ(), "IOS_PILOT_CONFIG_DIR="+configDir)
-		_ = cmd.Run()
-
-		cmd = exec.Command(pilotBin, "daemon", "stop")
-		cmd.Env = append(os.Environ(), "IOS_PILOT_CONFIG_DIR="+configDir)
-		_ = cmd.Run()
+		// Best-effort: kill Settings, disconnect, stop daemon.
+		run := func(args ...string) {
+			cmd := exec.Command(pilotBin, args...)
+			cmd.Env = append(os.Environ(), "IOS_PILOT_CONFIG_DIR="+configDir)
+			_ = cmd.Run()
+		}
+		run("app", "kill", "com.apple.Preferences")
+		run("device", "disconnect")
+		run("daemon", "stop")
 	})
 
 	var connectedUDID string
@@ -237,17 +241,29 @@ func TestIntegrationCLI(t *testing.T) {
 
 	// 04 — Screenshot
 	t.Run("04_Screenshot", func(t *testing.T) {
-		result := runPilotJSON(t, "look")
-		screenshotPath, _ := result["screenshot"].(string)
-		if screenshotPath == "" {
+		r := runPilot(t, "look")
+		if r.ExitCode != 0 {
+			// On iOS 17+ in degraded mode, instruments screenshot requires
+			// Developer Image which is unavailable. Skip rather than fail.
+			if wdaMode == "degraded" && strings.Contains(r.Stderr, "screenshot") {
+				t.Skipf("screenshot unavailable in degraded mode: %s", strings.TrimSpace(r.Stderr))
+			}
+			t.Fatalf("ios-pilot look exited %d\nstdout: %s\nstderr: %s", r.ExitCode, r.Stdout, r.Stderr)
+		}
+		var result map[string]any
+		if err := json.Unmarshal([]byte(r.Stdout), &result); err != nil {
+			t.Fatalf("parse JSON: %v\nraw: %s", err, r.Stdout)
+		}
+		path, _ := result["screenshot"].(string)
+		if path == "" {
 			t.Fatal("screenshot path is empty")
 		}
-		data, err := os.ReadFile(screenshotPath)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read screenshot file: %v", err)
 		}
 		if len(data) < 4 || data[0] != 0x89 || data[1] != 0x50 || data[2] != 0x4E || data[3] != 0x47 {
-			t.Errorf("not a PNG: first bytes %x", data[:4])
+			t.Fatalf("not a PNG: first bytes %x", data[:4])
 		}
 		if ss, ok := result["screen_size"].([]any); ok {
 			for i, v := range ss {
@@ -256,7 +272,7 @@ func TestIntegrationCLI(t *testing.T) {
 				}
 			}
 		}
-		t.Logf("screenshot: %s (%d bytes)", screenshotPath, len(data))
+		t.Logf("screenshot: %s (%d bytes)", path, len(data))
 	})
 
 	// 05 — App List
@@ -275,31 +291,20 @@ func TestIntegrationCLI(t *testing.T) {
 		t.Logf("found %d user app(s)", len(apps))
 	})
 
-	// 06 — App Launch (probe instruments availability)
+	// 06 — App Launch Settings (instruments → WDA fallback)
 	t.Run("06_AppLaunch", func(t *testing.T) {
-		r := runPilot(t, "app", "launch", "com.apple.Preferences")
-		if r.ExitCode != 0 {
-			if strings.Contains(r.Stderr, "Developer Image") || strings.Contains(r.Stderr, "InvalidService") {
-				canControlApps = false
-				t.Skip("app launch requires Developer Image — skipping")
-			}
-			t.Fatalf("app launch failed: %s", r.Stderr)
-		}
-		canControlApps = true
-		var result map[string]any
-		json.Unmarshal([]byte(r.Stdout), &result)
+		requireWDA(t) // WDA fallback needs full mode
+		result := runPilotJSON(t, "app", "launch", "com.apple.Preferences")
 		if status, _ := result["status"].(string); status != "launched" {
 			t.Errorf("expected status=launched, got %q", status)
 		}
-		if pid, _ := result["pid"].(float64); pid <= 0 {
-			t.Errorf("expected pid > 0, got %v", result["pid"])
-		}
 		time.Sleep(2 * time.Second)
+		t.Logf("launched Settings: %v", result)
 	})
 
 	// 07 — App Foreground
 	t.Run("07_AppForeground", func(t *testing.T) {
-		requireAppControl(t)
+		requireWDA(t)
 		result := runPilotJSON(t, "app", "foreground")
 		bid, _ := result["bundle_id"].(string)
 		if bid == "" {
@@ -310,75 +315,60 @@ func TestIntegrationCLI(t *testing.T) {
 
 	// 08 — Check App Running
 	t.Run("08_CheckAppRunning", func(t *testing.T) {
-		requireAppControl(t)
+		requireWDA(t)
 		result := runPilotJSON(t, "check", "app-running", "com.apple.Preferences")
 		if pass, _ := result["pass"].(bool); !pass {
 			t.Errorf("expected pass=true, got %v (detail: %v)", result["pass"], result["detail"])
 		}
 	})
 
-	// 09 — Annotated Screenshot (WDA required)
+	// 09 — Annotated Screenshot with elements (WDA required)
 	t.Run("09_AnnotatedScreenshot", func(t *testing.T) {
 		requireWDA(t)
 		result := runPilotJSON(t, "look", "--annotate")
-		screenshotPath, _ := result["screenshot"].(string)
-		if screenshotPath == "" {
+		path, _ := result["screenshot"].(string)
+		if path == "" {
 			t.Fatal("screenshot path is empty")
 		}
 		elements, _ := result["elements"].([]any)
 		if len(elements) == 0 {
-			t.Fatal("expected non-empty elements — WDA is full mode but returned nothing")
+			t.Fatal("expected non-empty elements — WDA full mode but returned nothing")
 		}
-		if !strings.Contains(filepath.Base(screenshotPath), "annotated") {
-			t.Errorf("expected filename to contain 'annotated', got %q", filepath.Base(screenshotPath))
+		if !strings.Contains(filepath.Base(path), "annotated") {
+			t.Errorf("expected filename to contain 'annotated', got %q", filepath.Base(path))
 		}
-		t.Logf("annotated screenshot: %s, %d elements", screenshotPath, len(elements))
+		t.Logf("annotated screenshot: %s, %d elements", path, len(elements))
 	})
 
-	// 10 — UI Screenshot (WDA required)
+	// 10 — UI Screenshot with elements (WDA required)
 	t.Run("10_UIScreenshot", func(t *testing.T) {
 		requireWDA(t)
 		result := runPilotJSON(t, "look", "--ui")
-		screenshotPath, _ := result["screenshot"].(string)
-		if screenshotPath == "" {
+		path, _ := result["screenshot"].(string)
+		if path == "" {
 			t.Fatal("screenshot path is empty")
 		}
-		if strings.Contains(filepath.Base(screenshotPath), "annotated") {
-			t.Errorf("--ui should not produce 'annotated' filename: %q", filepath.Base(screenshotPath))
+		if strings.Contains(filepath.Base(path), "annotated") {
+			t.Errorf("--ui should not produce 'annotated' filename: %q", filepath.Base(path))
 		}
 		elements, _ := result["elements"].([]any)
 		if len(elements) == 0 {
 			t.Fatal("expected non-empty elements for --ui")
 		}
-		t.Logf("ui screenshot: %s, %d elements", screenshotPath, len(elements))
+		t.Logf("ui screenshot: %s, %d elements", path, len(elements))
 	})
 
-	// 11 — Tap: screenshot must change (WDA required)
-	t.Run("11_Tap", func(t *testing.T) {
+	// 11 — Swipe Down in Settings: screenshot must change (WDA required)
+	t.Run("11_SwipeDown", func(t *testing.T) {
 		requireWDA(t)
+		_, h := getScreenSize(t)
 		before := takeScreenshotHash(t)
 
-		result := runPilotJSON(t, "act", "tap", "200", "400")
-		if status, _ := result["status"].(string); status != "ok" {
-			t.Fatalf("tap failed: status=%q", status)
-		}
-		time.Sleep(2 * time.Second)
-
-		after := takeScreenshotHash(t)
-		if before == after {
-			t.Error("screen did NOT change after tap — action had no visible effect")
-		}
-	})
-
-	// 12 — Swipe Down: screenshot must change (WDA required)
-	t.Run("12_SwipeDown", func(t *testing.T) {
-		requireWDA(t)
-		before := takeScreenshotHash(t)
-
-		result := runPilotJSON(t, "act", "swipe", "200", "600", "200", "200")
-		if status, _ := result["status"].(string); status != "ok" {
-			t.Fatalf("swipe failed: status=%q", status)
-		}
+		// Swipe from center-down to center-up (scroll content down).
+		midX := 200
+		runPilotJSON(t, "act", "swipe",
+			fmt.Sprint(midX), fmt.Sprint(h*3/4),
+			fmt.Sprint(midX), fmt.Sprint(h/4))
 		time.Sleep(2 * time.Second)
 
 		after := takeScreenshotHash(t)
@@ -387,15 +377,16 @@ func TestIntegrationCLI(t *testing.T) {
 		}
 	})
 
-	// 13 — Swipe Up: screenshot must change (WDA required)
-	t.Run("13_SwipeUp", func(t *testing.T) {
+	// 12 — Swipe Up: scroll back, screenshot must change (WDA required)
+	t.Run("12_SwipeUp", func(t *testing.T) {
 		requireWDA(t)
+		_, h := getScreenSize(t)
 		before := takeScreenshotHash(t)
 
-		result := runPilotJSON(t, "act", "swipe", "200", "200", "200", "600")
-		if status, _ := result["status"].(string); status != "ok" {
-			t.Fatalf("swipe failed: status=%q", status)
-		}
+		midX := 200
+		runPilotJSON(t, "act", "swipe",
+			fmt.Sprint(midX), fmt.Sprint(h/4),
+			fmt.Sprint(midX), fmt.Sprint(h*3/4))
 		time.Sleep(2 * time.Second)
 
 		after := takeScreenshotHash(t)
@@ -404,26 +395,85 @@ func TestIntegrationCLI(t *testing.T) {
 		}
 	})
 
-	// 14 — Press Home: screenshot must change (WDA required)
+	// 13 — Tap on a real element: use `look --ui` to find a target (WDA required)
+	t.Run("13_Tap", func(t *testing.T) {
+		requireWDA(t)
+		// Get element tree, find a tappable element.
+		result := runPilotJSON(t, "look", "--ui")
+		elements, _ := result["elements"].([]any)
+		if len(elements) == 0 {
+			t.Fatal("no elements to tap on")
+		}
+
+		// Pick the first element with a non-empty label and a valid center.
+		var tapX, tapY int
+		var tapLabel string
+		for _, e := range elements {
+			el, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			label, _ := el["label"].(string)
+			center, _ := el["center"].([]any)
+			if label != "" && len(center) == 2 {
+				cx, _ := center[0].(float64)
+				cy, _ := center[1].(float64)
+				if cx > 0 && cy > 0 {
+					tapX, tapY = int(cx), int(cy)
+					tapLabel = label
+					break
+				}
+			}
+		}
+		if tapX == 0 && tapY == 0 {
+			t.Fatal("could not find a labeled element with valid coordinates")
+		}
+
+		before := takeScreenshotHash(t)
+		t.Logf("tapping element %q at (%d, %d)", tapLabel, tapX, tapY)
+
+		r := runPilotJSON(t, "act", "tap", fmt.Sprint(tapX), fmt.Sprint(tapY))
+		if status, _ := r["status"].(string); status != "ok" {
+			t.Fatalf("tap failed: status=%q", status)
+		}
+		time.Sleep(2 * time.Second)
+
+		after := takeScreenshotHash(t)
+		if before == after {
+			t.Error("screen did NOT change after tapping element — action had no visible effect")
+		}
+	})
+
+	// 14 — Press Home: go back to home screen, screenshot must change (WDA required)
 	t.Run("14_PressHome", func(t *testing.T) {
 		requireWDA(t)
 		before := takeScreenshotHash(t)
 
-		result := runPilotJSON(t, "act", "press", "home")
-		if status, _ := result["status"].(string); status != "ok" {
+		r := runPilotJSON(t, "act", "press", "home")
+		if status, _ := r["status"].(string); status != "ok" {
 			t.Fatalf("press home failed: status=%q", status)
 		}
 		time.Sleep(2 * time.Second)
 
 		after := takeScreenshotHash(t)
 		if before == after {
-			t.Error("screen did NOT change after press home — action had no visible effect")
+			t.Error("screen did NOT change after press home")
 		}
 	})
 
 	// 15 — Screenshot After Home
 	t.Run("15_ScreenshotAfterHome", func(t *testing.T) {
-		result := runPilotJSON(t, "look")
+		r := runPilot(t, "look")
+		if r.ExitCode != 0 {
+			if wdaMode == "degraded" && strings.Contains(r.Stderr, "screenshot") {
+				t.Skipf("screenshot unavailable in degraded mode: %s", strings.TrimSpace(r.Stderr))
+			}
+			t.Fatalf("ios-pilot look exited %d\nstdout: %s\nstderr: %s", r.ExitCode, r.Stdout, r.Stderr)
+		}
+		var result map[string]any
+		if err := json.Unmarshal([]byte(r.Stdout), &result); err != nil {
+			t.Fatalf("parse JSON: %v\nraw: %s", err, r.Stdout)
+		}
 		path, _ := result["screenshot"].(string)
 		if path == "" {
 			t.Fatal("screenshot path is empty")
@@ -438,10 +488,10 @@ func TestIntegrationCLI(t *testing.T) {
 		t.Logf("screenshot after home: %d bytes", len(data))
 	})
 
-	// 16 — Check Element (WDA + app control required)
+	// 16 — Check Element (WDA required)
 	t.Run("16_CheckElement", func(t *testing.T) {
 		requireWDA(t)
-		requireAppControl(t)
+		// Re-launch Settings.
 		runPilotJSON(t, "app", "launch", "com.apple.Preferences")
 		time.Sleep(2 * time.Second)
 
@@ -453,7 +503,7 @@ func TestIntegrationCLI(t *testing.T) {
 
 	// 17 — App Kill
 	t.Run("17_AppKill", func(t *testing.T) {
-		requireAppControl(t)
+		requireWDA(t)
 		result := runPilotJSON(t, "app", "kill", "com.apple.Preferences")
 		if status, _ := result["status"].(string); status != "killed" {
 			t.Errorf("expected status=killed, got %q", status)

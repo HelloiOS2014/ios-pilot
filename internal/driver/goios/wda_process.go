@@ -11,6 +11,7 @@ import (
 	goios "github.com/danielpaulus/go-ios/ios"
 	"github.com/danielpaulus/go-ios/ios/installationproxy"
 	"github.com/danielpaulus/go-ios/ios/testmanagerd"
+	"github.com/danielpaulus/go-ios/ios/tunnel"
 	"ios-pilot/internal/driver"
 )
 
@@ -37,10 +38,20 @@ func (c *wdaCloser) Close() error {
 
 // StartWDA launches WDA on the device using testmanagerd.RunTestWithConfig.
 // It blocks until WDA responds on localhost:8100 or ctx is cancelled.
+// For iOS 17+ devices, it enriches the device entry with tunnel/RSD info.
 func (d *GoIosWDAProcessDriver) StartWDA(ctx context.Context, udid string) (io.Closer, error) {
 	entry, err := goios.GetDevice(udid)
 	if err != nil {
 		return nil, fmt.Errorf("start wda: get device %q: %w", udid, err)
+	}
+
+	// For iOS 17+ devices, enrich the device entry with tunnel info.
+	if entry.SupportsRsd() {
+		enriched, enrichErr := enrichWithTunnel(entry, udid)
+		if enrichErr == nil {
+			entry = enriched
+		}
+		// If enrichment fails, proceed anyway — testmanagerd will report the actual error.
 	}
 
 	// Discover WDA bundle ID from installed apps.
@@ -74,6 +85,38 @@ func (d *GoIosWDAProcessDriver) StartWDA(ctx context.Context, udid string) (io.C
 	}
 
 	return &wdaCloser{cancel: cancel}, nil
+}
+
+// enrichWithTunnel queries the tunnel agent for this device's tunnel info
+// and returns a DeviceEntry that includes the RSD provider, so testmanagerd
+// can connect through the tunnel.
+func enrichWithTunnel(entry goios.DeviceEntry, udid string) (goios.DeviceEntry, error) {
+	info, err := tunnel.TunnelInfoForDevice(udid, goios.HttpApiHost(), goios.HttpApiPort())
+	if err != nil {
+		return entry, fmt.Errorf("get tunnel info: %w", err)
+	}
+
+	// Connect to RSD via the tunnel address.
+	rsdService, err := goios.NewWithAddrPortDevice(info.Address, info.RsdPort, entry)
+	if err != nil {
+		return entry, fmt.Errorf("connect to RSD: %w", err)
+	}
+	defer rsdService.Close()
+
+	rsdProvider, err := rsdService.Handshake()
+	if err != nil {
+		return entry, fmt.Errorf("RSD handshake: %w", err)
+	}
+
+	enriched, err := goios.GetDeviceWithAddress(udid, info.Address, rsdProvider)
+	if err != nil {
+		return entry, fmt.Errorf("get device with address: %w", err)
+	}
+
+	enriched.UserspaceTUN = info.UserspaceTUN
+	enriched.UserspaceTUNPort = info.UserspaceTUNPort
+
+	return enriched, nil
 }
 
 // findWDABundleID lists installed apps and returns the first bundle ID containing "WebDriverAgent".

@@ -47,7 +47,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Annotate.LabelSize != 14 {
 		t.Errorf("Annotate.LabelSize: got %d, want %d", cfg.Annotate.LabelSize, 14)
 	}
-	expectedTypes := []string{"button", "textfield", "switch", "link", "cell"}
+	expectedTypes := []string{"button", "textfield", "switch", "link", "cell", "icon", "text"}
 	if len(cfg.Annotate.InteractiveTypes) != len(expectedTypes) {
 		t.Errorf("Annotate.InteractiveTypes length: got %d, want %d", len(cfg.Annotate.InteractiveTypes), len(expectedTypes))
 	} else {

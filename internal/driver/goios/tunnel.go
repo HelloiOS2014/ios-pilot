@@ -51,9 +51,8 @@ func (t *GoIosTunnelDriver) IsTunnelRunning(udid string) bool {
 }
 
 // EnsureTunnel starts the go-ios tunnel agent in userspace mode if it is
-// not already running and waits until it reports ready.
-// If udid is non-empty, this does not wait for a device-specific tunnel;
-// the agent will establish one automatically when the device connects.
+// not already running, waits until it reports ready, and — when a UDID is
+// provided — waits for the device-specific tunnel to be established.
 func (t *GoIosTunnelDriver) EnsureTunnel(udid string) error {
 	if err := tunnel.RunAgent("user"); err != nil {
 		return fmt.Errorf("ensure tunnel: start agent: %w", err)
@@ -61,7 +60,19 @@ func (t *GoIosTunnelDriver) EnsureTunnel(udid string) error {
 	if !tunnel.WaitUntilAgentReady() {
 		return fmt.Errorf("ensure tunnel: agent did not become ready")
 	}
-	return nil
+	if udid == "" {
+		return nil
+	}
+
+	// Wait for the device-specific tunnel to appear (up to 15 s).
+	for i := 0; i < 30; i++ {
+		info, err := tunnel.TunnelInfoForDevice(udid, goios.HttpApiHost(), goios.HttpApiPort())
+		if err == nil && info.Udid == udid {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("ensure tunnel: device tunnel for %s did not appear within 15s", udid)
 }
 
 // StopTunnel stops an individual device tunnel (if udid is non-empty) or

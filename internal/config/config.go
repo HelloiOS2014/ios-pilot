@@ -62,7 +62,7 @@ func Default() Config {
 			BoxColor:  "#FF0000",
 			LabelSize: 14,
 			InteractiveTypes: []string{
-				"button", "textfield", "switch", "link", "cell",
+				"button", "textfield", "switch", "link", "cell", "icon", "text",
 			},
 		},
 	}
