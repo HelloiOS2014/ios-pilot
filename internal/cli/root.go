@@ -40,6 +40,9 @@ Commands:
 Use "ios-pilot <command> --help" for more information about a command.
 `
 
+// Version is set at build time via -ldflags "-X ios-pilot/internal/cli.Version=vX.Y.Z".
+var Version = "dev"
+
 // Run is the main entry point for the CLI. Returns an exit code.
 func Run() int {
 	args := os.Args[1:]
@@ -50,7 +53,7 @@ func Run() int {
 	}
 
 	if args[0] == "--version" || args[0] == "-version" || args[0] == "version" {
-		fmt.Println("ios-pilot v0.1.0")
+		fmt.Printf("ios-pilot %s\n", Version)
 		return 0
 	}
 
