@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 
 	"ios-pilot/internal/config"
@@ -94,9 +95,11 @@ func (dm *DeviceManager) Connect(udid string) (*DeviceStatus, error) {
 		return nil, fmt.Errorf("get device %s: %w", udid, err)
 	}
 
-	// Attempt tunnel — failure is non-fatal.
+	// Start in-process tunnel manager and wait for device tunnel.
 	if dm.tunnelDriver != nil {
-		_ = dm.tunnelDriver.EnsureTunnel(udid)
+		if err := dm.tunnelDriver.EnsureTunnel(udid); err != nil {
+			slog.Warn("tunnel setup failed", "error", err)
+		}
 	}
 
 	// Forward device WDA port to localhost — failure is non-fatal.
@@ -127,6 +130,8 @@ func (dm *DeviceManager) Connect(udid string) (*DeviceStatus, error) {
 				dm.wdaProcess = proc
 				dm.mu.Unlock()
 				alive, _ = dm.wdaDriver.Status(wdaURL)
+			} else {
+				slog.Warn("WDA auto-start failed", "error", startErr)
 			}
 		}
 

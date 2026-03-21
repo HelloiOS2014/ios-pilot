@@ -76,6 +76,8 @@ func Run() int {
 		return cmdWDA(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
+	case "tunnel":
+		return cmdTunnel(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "ios-pilot: unknown command %q\n\n", args[0])
 		fmt.Print(usage)

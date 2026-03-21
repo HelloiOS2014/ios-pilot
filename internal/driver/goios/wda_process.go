@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -45,13 +46,15 @@ func (d *GoIosWDAProcessDriver) StartWDA(ctx context.Context, udid string) (io.C
 		return nil, fmt.Errorf("start wda: get device %q: %w", udid, err)
 	}
 
-	// For iOS 17+ devices, enrich the device entry with tunnel info.
-	if entry.SupportsRsd() {
-		enriched, enrichErr := enrichWithTunnel(entry, udid)
-		if enrichErr == nil {
-			entry = enriched
-		}
-		// If enrichment fails, proceed anyway — testmanagerd will report the actual error.
+	// Always attempt to enrich the device entry with tunnel info.
+	// On iOS 17+, the basic entry from GetDevice has Rsd==nil (SupportsRsd() is false),
+	// but testmanagerd still needs tunnel info. So we always try enrichment and
+	// let testmanagerd decide if it can proceed without it.
+	enriched, enrichErr := enrichWithTunnel(entry, udid)
+	if enrichErr == nil {
+		entry = enriched
+	} else {
+		slog.Warn("tunnel enrichment failed", "error", enrichErr)
 	}
 
 	// Discover WDA bundle ID from installed apps.
@@ -89,12 +92,36 @@ func (d *GoIosWDAProcessDriver) StartWDA(ctx context.Context, udid string) (io.C
 
 // enrichWithTunnel queries the tunnel agent for this device's tunnel info
 // and returns a DeviceEntry that includes the RSD provider, so testmanagerd
-// can connect through the tunnel.
+// can connect through the tunnel. Times out after 10 seconds to avoid blocking.
 func enrichWithTunnel(entry goios.DeviceEntry, udid string) (goios.DeviceEntry, error) {
+	type result struct {
+		entry goios.DeviceEntry
+		err   error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		e, err := doEnrichWithTunnel(entry, udid)
+		ch <- result{e, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.entry, r.err
+	case <-time.After(10 * time.Second):
+		return entry, fmt.Errorf("enrich with tunnel timed out after 10s")
+	}
+}
+
+func doEnrichWithTunnel(entry goios.DeviceEntry, udid string) (goios.DeviceEntry, error) {
 	info, err := tunnel.TunnelInfoForDevice(udid, goios.HttpApiHost(), goios.HttpApiPort())
 	if err != nil {
 		return entry, fmt.Errorf("get tunnel info: %w", err)
 	}
+
+	// Set userspace TUN fields BEFORE connecting to RSD — ConnectTUNDevice
+	// checks UserspaceTUN to decide whether to route through the local
+	// TCP proxy or connect directly to the IPv6 tunnel address.
+	entry.UserspaceTUN = info.UserspaceTUN
+	entry.UserspaceTUNPort = info.UserspaceTUNPort
 
 	// Connect to RSD via the tunnel address.
 	rsdService, err := goios.NewWithAddrPortDevice(info.Address, info.RsdPort, entry)
