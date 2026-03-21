@@ -15,6 +15,6 @@
   "annotate": {
     "box_color": "#FF0000",
     "label_size": 14,
-    "interactive_types": ["button", "textfield", "switch", "link", "cell"]
+    "interactive_types": ["button", "textfield", "switch", "link", "cell", "icon", "text"]
   }
 }
